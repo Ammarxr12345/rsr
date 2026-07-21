@@ -1,0 +1,428 @@
+---
+title: "Tornados"
+author: "Amar omer Ahmed Osman,Sascha Taute"
+date: "2026-05-22"
+output:
+  html_document:
+    toc: true
+    toc_depth: 6
+    number_sections: true
+    toc_float: true
+    code_folding: hide
+    theme: flatly
+    highlight: tango
+    code_download: true
+    df_print: paged
+---
+
+```{r , include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r , include=FALSE}
+
+library(tidyverse)
+library(readr)
+library(tidytuesdayR)
+library(tidyverse)  
+library(janitor)    
+library(corrr)       
+library(broom) 
+library(naniar)
+library(scales)
+library(corrplot)
+library(sf)# Enthalt funktionen fur Koordinatentransformation, Anpassung von grenzen , lander farben usw.
+library(spData) # enthalt ein dataframe ,in dem ein paar Infos uber jedes Land wie die Population, kontienent usw. gespeichert ist eine der wichtiger infomation ist die Koodinatenachse jedes Landes
+library(maps)
+
+tuesdata<-tt_load(2023,week=20)
+tornados <- as.data.frame(tuesdata[1])
+names(tornados)<-gsub("tornados.","",names(tornados))
+  
+
+
+
+```
+
+# Einleitung:
+
+Die Tornadosdaten der Vereinigten Staaten werden in dieser Analyse untersucht. Der verwendete Datensatz stammt aus dem Projekt TidyTuesday und enthält umfangreiche Informationen über Tornados in den USA.
+
+Zu den wichtigen Infomationen über Tornados gehoren das Datum jeder Tornado , in Welchen Bundesstaaten passierte er , die Starke der Tornados , die Stärke der Tornados sowie die geografische Position (Breiten- und Längengrad) und weitere Eigenschaften wie der zuruckgelegte Weg des Tornados
+
+Das Ziel der Analyse ist, die geometrische Ausbreitung von Tornados und etliche Beziehungen zwischen den Attributen vonTornados und ihren Auswirkungen zu verstehen und zu visualisieren.
+
+# Erster Einblick über die Tornadosdaten
+
+## Visualisation von zehn Stichproben
+
+In der unten gezeigten Tabelle stellt Jede Zeile einen Tornado dar und jede Spalte ein Attribut .
+
+```{r}
+
+tornados %>% select(-om) %>% slice_sample(n=10)
+
+
+```
+
+## Die Tornados-Daten enthalten folgende Attribute:
+
+```{r}
+as.data.frame(names(tornados))
+
+```
+
+## Missingsdata
+
+```{r missings,echo=FALSE}
+
+gg_miss_var(tornados)
+
+
+```
+
+Anhand der Skizze lässt sich erkennen, dass insbesondere bei den durch die Tornados verursachten Schäden viele Infomationen fehlen.
+
+```{r}
+ hist(tornados$inj)
+```
+
+## Darstellung der Haufigkeit von Tornados nach Bundesstaaten
+
+```{r}
+st_count <- tornados %>%
+  count(st, sort = TRUE)
+n <- nrow(st_count)
+half <- ceiling(n / 2)
+st_count <- st_count %>%
+  mutate(part = ifelse(row_number() <= half, "Part 1", "Part 2"))
+ggplot(st_count, aes(x = reorder(st, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~part, scales = "free_y") +
+  labs(title = "Tornado frequency by State (Split view)")
+head(st_count,n=5)[,1:2]
+```
+
+In Texas wurde die hochste Anzahl an Tornados nach der Skizze registriert,etwa doppelt so viele wie im zweiplatzierten Bundestaat. Danach folgen Kansas und Oklahoma .
+
+# Darstellung der Häufigkeit der Tornados im Verlauf der Jahre basierend auf den Bundesstaaten
+
+```{r}
+e<-tornados %>%
+  tabyl(st) %>%
+  adorn_pct_formatting(digits = 1) %>% head(n=5)
+staats_5<-st_count[1:5,1]
+tornados_st<-tornados %>%select(st,yr) %>%  filter(st %in% staats_5)
+
+ggplot(tornados_st,
+       aes(x = st,
+           y = yr,
+           fill = st)) +
+  geom_violin() +
+  theme_minimal() +
+  labs(title = "Anzahl der Tornados in jedem Bundesstaat im Laufe der Jahre",
+    x = "Die Staaten",
+    y = "Jahren"
+       )
+
+
+```
+
+Hier lässt sich deutlich erkennen, wie sich die Häufigkeit der Tornados im Laufe der Jahre in den fünf Bundesstaaten mit der höchsten Anzahl an Tornados entwickelt hat.Zum Beispiel ereigneten sich im Bundesstaat Kansas in den Jahren von 1960 bis 1990 im Vergleich zu den späteren Jahren relativ wenige Tornados. Dagegen wurde im Zeitraum von 2000 bis 2015 im Bundesstaat Kansas eine deutlich höhere Anzahl von Tornados registriert.
+
+## In welchen Monaten ereignen sich Tornados am häufigsten ?
+
+```{r}
+
+tornados_monaten<- tornados %>% select(mo,yr) %>% filter(yr>=2016) 
+
+
+ggplot(tornados_monaten,aes(x=factor(mo),color=factor(yr),group = factor(yr)))+
+  geom_density()+
+  labs(x="Monaten"
+       )
+
+```
+
+Es ist deutlich eine hohe Dichte in den Monaten 2 bis 6 in der Dichte-Darstellung zu sehen, daraus lässt sich schließen, dass die tornados am häufigsten in diesem Zeitraum von Februar bis Juni auftreten.
+
+## Die Relation zwischen der Starke von Tornados und den druch Tornados verletzten und getoteten Menschen
+
+```{r}
+
+tornados %>% group_by(inj) %>% summarise(Anzahl=n(),Durchschnittliche_magnitude=round(mean(mag, na.rm = TRUE)),  .groups = "drop") %>% mutate(Prozent=scales::percent(Anzahl/sum(Anzahl) ,accuracy = 0.01)) %>%   relocate(Prozent, .after = Anzahl)
+
+
+tornados %>% group_by(fat) %>% summarise(Anzahl=n(),Durchschnittliche_magnitude=round(mean(mag, na.rm = TRUE)),  .groups = "drop") %>% mutate(Prozent=scales::percent(Anzahl/sum(Anzahl) ,accuracy = 0.01)) %>%   relocate(Prozent, .after = Anzahl)
+
+
+
+```
+
+Die Tabellen zeigen, wie viele Tornados eine bestimmten Anzahl an verletzten Menschen verursachen. Aus der Tabbelle kann man schließen, dass die Tornados in USA in den meisten Fallen keine verletzten Menschen hinterlassen, da für die überwiegende Mehrheit der Tornados weder Verletzte noch Todesfälle registriert wurden. Außerdem ist in der Tabelle deutlich erkennbar, dass ein enger Zusammenhang zwischen der Stärke der Tornados und der Anzahl der Verletzten sowie der Todesopfer besteht. Im Folgenden wird dieser Zusammenhang noch genauer analysiert.
+
+```{r}
+
+tornados %>%
+  summarise(
+    cor_mag_inj = cor(mag, inj, use = "complete.obs"),
+    cor_mag_fat = cor(mag, fat, use = "complete.obs"),
+    cor_mag_inj_im_schwierigen_fall = cor(mag[inj > 0], inj[inj > 0], use = "complete.obs"),
+    cor_mag_fat_im_schwierigen_fall = cor(mag[fat > 0], fat[fat > 0], use = "complete.obs")
+  )
+tornados_cor<- tornados %>% select(mag,inj,st,fat) %>% filter(inj>0,fat>0)
+ggplot(data = tornados_cor,
+       aes(x =inj ,
+           y = mag,
+          )) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+
+
+ggplot(tornados_cor, aes(x = factor(mag), y = inj)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(x = "Magnitude (mag)", y = "Injuries (inj)") +
+  theme_minimal()
+
+ggplot(tornados_cor, aes(x = factor(mag), y = fat)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(x = "Magnitude (mag)", y = "Injuries (inj)") +
+  theme_minimal()
+
+
+```
+
+Die Berechnungen stellt die Korrelation zwischen der Starke der Tornados und den Auswirkungen auf Menschen fest.Anschließend werden die Korrelationen erneut nur für Fälle berechnet, in denen tatsächlich Verletzte bzw. Todesfälle aufgetreten sind, um den Zusammenhang in schwereren Erergnissen genauer zu untersuchen. Dadurch kann analysiert werden, ob stärkere Tornados in besonders extremen Fällen einen stärkeren Einfluss auf die Anzahl der Verletzten und Todesopfer haben.die Ergibnisse zeigen in den beiden Fällen eine schwache Relation zwischen der Starke der Tornados und den Auswirkungen auf Menschen.
+
+# Vorhersage von Tornados in nachsten zehn Jahren
+
+```{r,message=FALSE,warning=FALSE}
+tornados_vorhersage <- tornados %>% group_by(st,yr) %>% summarise(n=n(),.groups = "drop")
+
+tornados_vorhersage
+
+tornados_lm <- lm(
+  n ~ yr+st,
+  data = tornados_vorhersage
+)
+
+new <- data.frame(
+  st = "TX",
+  yr=2030
+)
+
+predict(tornados_lm, newdata = new)
+
+tornados_vorhersage_TX<- data.frame(yr=c(2026:2036))
+tornados_vorhersage_TX<- tornados_vorhersage_TX %>% mutate(st="TX")
+
+tornados_vorhersage_TX<- tornados_vorhersage_TX %>% mutate( Anzahl=round(predict(tornados_lm, newdata = data.frame( st ,  yr)) ))
+ggplot(tornados_vorhersage_TX,
+       aes(x = yr, y = Anzahl)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Vorhersage von Tornados fur nachte Zehn Jahre") +
+  theme_bw()
+
+
+
+fit2 <- aov(
+      n ~ yr+st,
+            data = tornados_vorhersage)
+summary(fit2)
+
+
+```
+
+Die Entstehung neuer Anzahl an Torandos beruht nur auf das angegebene Bundesstaate und Jahr. Naturlich hangt die Tornadosvorhersage tatsachlich von vielen Infos aber man kann immerhin so einen Blick erschaffen, ob sich die Anzahl an Tornados in nachsten zehn Jahren vermehren.
+
+Die Ergibnisse der Summary stellen fest das die Anzahl an Tornados sehr von dem Jahr und Bundesstaat ist, da die Werte von Sum Sq Mean Sq F value sehr gross ist die wahrscheinlichkeit dass diese Bewertung zufallig so optimal ist ist sehr gering
+
+```{=html}
+<!--
+
+usa<-world %>% filter(name_long=="United States")
+plot(usa["geom"])
+
+usa1<-usa["geom"]
+
+world_North_America = world[world$continent == "North America", ]
+North_America = st_union(world_North_America)
+
+North_America1<-st_geometry(world_North_America)
+
+
+usa = world[world$name_long == "United States", ]
+plot(st_geometry(usa), expandBB = c(0, 0.2, 0.1, 1), col = "gray", lwd = 3)
+plot(st_geometry(world_North_America), add = TRUE)
+
+-->
+```
+
+# Visualisierung in der USA-Karte
+
+```{r,warning=FALSE}
+sf::sf_use_s2(FALSE)
+
+states <- st_as_sf(map("state", plot = FALSE, fill = TRUE))
+states <- st_make_valid(states)
+cntrd <- st_centroid(states)
+
+centers <- cbind(cntrd, st_coordinates(cntrd))
+centers <- centers %>%
+  mutate(
+    ID = recode(ID,
+      "alabama" = "AL",
+      "arizona" = "AZ",
+      "arkansas" = "AR",
+      "california" = "CA",
+      "colorado" = "CO",
+      "connecticut" = "CT",
+      "delaware" = "DE",
+      "district of columbia" = "DC",
+      "florida" = "FL",
+      "georgia" = "GA",
+      "idaho" = "ID",
+      "illinois" = "IL",
+      "indiana" = "IN",
+      "iowa" = "IA",
+      "kansas" = "KS",
+      "kentucky" = "KY",
+      "louisiana" = "LA",
+      "maine" = "ME",
+      "maryland" = "MD",
+      "massachusetts" = "MA",
+      "michigan" = "MI",
+      "minnesota" = "MN",
+      "mississippi" = "MS",
+      "missouri" = "MO",
+      "montana" = "MT",
+      "nebraska" = "NE",
+      "nevada" = "NV",
+      "new hampshire" = "NH",
+      "new jersey" = "NJ",
+      "new mexico" = "NM",
+      "new york" = "NY",
+      "north carolina" = "NC",
+      "north dakota" = "ND",
+      "ohio" = "OH",
+      "oklahoma" = "OK",
+      "oregon" = "OR",
+      "pennsylvania" = "PA",
+      "rhode island" = "RI",
+      "south carolina" = "SC",
+      "south dakota" = "SD",
+      "tennessee" = "TN",
+      "texas" = "TX",
+      "utah" = "UT",
+      "vermont" = "VT",
+      "virginia" = "VA",
+      "washington" = "WA",
+      "west virginia" = "WV",
+      "wisconsin" = "WI",
+      "wyoming" = "WY"
+    )
+  )
+
+ggplot()+
+  geom_sf(data=states)+
+    geom_sf(data = cntrd, color = "grey", size = 0.001)+
+   geom_sf_text(data = centers, aes(label = ID))+
+  labs(x="Longitude",y="Latitude")
+
+```
+
+## Tornados im jahr 2022 in den Monaten 2,3
+
+```{r,warning=FALSE}
+tornados_k1<- tornados %>% select(yr,slon,elat,elon,slat,mo,st) %>% filter(yr == 2022  )
+
+
+tornados_k<-st_as_sf(
+    tornados_k1,
+    coords = c("slon", "slat"),
+    crs = 4326
+)
+
+  ggplot()+
+  geom_sf(data=states)+
+  geom_sf(data = cntrd, color = "grey", size = 0.001)+
+  geom_sf_text(data = centers, aes(label = ID))+
+  geom_sf(data=tornados_k[tornados_k$mo == 2,] , color ="red") +
+  labs(title ="Tornados im Februar 2022",x="Longitude",y="Latitude")
+
+  ggplot()+
+  geom_sf(data=states)+
+  geom_sf(data = cntrd, color = "grey", size = 0.001)+
+  geom_sf_text(data = centers, aes(label = ID))+
+  geom_sf(data=tornados_k[tornados_k$mo == 3,] , color ="red") +
+  labs(title ="Tornados im Marz 2022",x="Longitude",y="Latitude")
+
+
+```
+
+## Linien ziwschen Anfangs- und Endpunkten der Tornados
+
+```{r,warning=FALSE}
+start <- st_as_sf(
+  head(tornados_k1, 100),
+  coords = c("slon", "slat"),
+  crs = 4326
+)
+
+end <- st_as_sf(
+  head(tornados_k1, 100),
+  coords = c("elon", "elat"),
+  crs = 4326
+)
+
+linen <- st_sfc(
+    lapply(1:100, function(i) {
+        st_linestring(
+            rbind(c(tornados_k1$slon[i],tornados_k1$slat[i]), c(tornados_k1$elon[i],tornados_k1$elat[i]))
+        )
+    }),
+    crs = 4326
+    
+)
+
+ggplot()+
+  geom_sf(data=states)+
+    geom_sf(data = cntrd, color = "grey", size = 0.001)+
+   geom_sf_text(data = centers, aes(label = ID))+
+  geom_sf(data = linen, color = "red", linewidth = 2)+
+    geom_sf(data=start , color ="red",size=0.000002) +
+        geom_sf(data=end , color ="red",size=0.000002)+
+  labs(x="Longitude",y="Latitude")
+
+       
+  
+
+```
+
+```{=html}
+<!--
+# Forschungsfragen
+
+1.  Wie haben sich Häufigkeit, Intensität und räumliche Verteilung von Tornados seit 1950 verändert?
+2.  gibt es einen zusammenhang zwischen der starker des Tornados und den Anzahl der verletzt Menschen?
+*/
+-->
+```
+
+# Fazit
+
+In dieser Analyse wurden die Tornados-Daten mithilfe von R-Spachewerkzeugen untersucht. Dabei wurden Munstern , Relationen und räumliche sowie zeitliche Zusammenhäng
+
+Die Ergebnisse zeigen , dass Texas ist der Bundesstaat mit der höchsten Anzahl an Tornados ist und die Vereinigten Staaten ziwschen weisen 1960 und 1990 eine vergleichsweise höhere Anzahl an Tornados auf. Außerdem treten Tornados statistisch mehr im Zeitraum von Februar bis Juni auf.
+
+Zusammenfassend lässt sich sagen, dass es mehrere Faktoren gibt , die einen Einfluss auf die Ergibnnisse hat ,daher mussen in dieser Analyse gewonnene Ergebssie nicht als hundertprozentlig vollstandig betrachtet werden aber die liefert basierend auf dem vorhandenen Infomationen einen Einblick in die Tornado-Aktivität und deren Auswirkungen .
+
+# Resourcen
+
+## USA-Karte und Manipulation von Koordinaten
+
+<https://r-graph-gallery.com/package/sf.html>
+
+<https://r.geocompx.org/>
